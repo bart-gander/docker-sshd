@@ -24,3 +24,15 @@ _testmain.go
 *.prof
 
 cmd/docker-sshd/docker-sshd
+
+# Built binaries
+kube-sshd
+
+# SSH host keys (never commit)
+ssh_host_ed25519_key
+ssh_host_ed25519_key.pub
+
+# Test artifacts
+_test-bin/
+*.test
+*.prof

@@ -1,5 +1,7 @@
 # docker-sshd && kube-sshd
 
+**NOTE** on this fork: This fork implements scp capability into project. Only tested with kube-sshd and what I needed this implementation for. Feel free to take it upstream as this is still MIT license. SCP part was made by using LLM agents, so **DO NOT** trust it without further review!
+
 ## docker-sshd
 
 with `docker-sshd`, you can `ssh` into docker containers from anywhere, 

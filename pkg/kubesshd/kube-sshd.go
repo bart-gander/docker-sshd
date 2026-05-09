@@ -56,9 +56,9 @@ func (k *kubesshdconn) Exec(ctx context.Context, execconfig bridge.ExecConfig) (
 		&v1.PodExecOptions{
 			Container: k.container,
 			Command:   execconfig.Cmd,
-			Stdin:     true,
-			Stdout:    true,
-			Stderr:    true,
+			Stdin:     execconfig.Input != nil,
+			Stdout:    execconfig.Output != nil,
+			Stderr:    execconfig.Output != nil,
 			TTY:       execconfig.Tty,
 		},
 		scheme.ParameterCodec,

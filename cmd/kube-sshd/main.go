@@ -8,6 +8,7 @@ import (
 
 	"github.com/tg123/docker-sshd/pkg/bridge"
 	"github.com/tg123/docker-sshd/pkg/kubesshd"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	log "github.com/sirupsen/logrus"
@@ -73,7 +74,10 @@ func main() {
 
 			kubeClientConfig, err := kubeConfig.ClientConfig()
 			if err != nil {
-				return err
+				kubeClientConfig, err = rest.InClusterConfig()
+				if err != nil {
+					return err
+				}
 			}
 
 			privateBytes, err := os.ReadFile(config.KeyFile)
