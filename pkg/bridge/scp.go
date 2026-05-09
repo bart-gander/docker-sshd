@@ -156,10 +156,6 @@ func readSCPOK(r io.Reader) error {
 	}
 }
 
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
 func (s *session) handleSCP(req scpRequest) error {
 	s.execLock.Lock()
 	if s.execCalled {
