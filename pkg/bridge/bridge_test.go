@@ -121,6 +121,29 @@ func TestSessionResizeCallsProvider(t *testing.T) {
 	}
 }
 
+func TestSplitExecCommandPreservesQuotedShellCommand(t *testing.T) {
+	cmd, err := splitExecCommand("bash -c 'pwd; echo ok'")
+	if err != nil {
+		t.Fatalf("splitExecCommand returned error: %v", err)
+	}
+
+	expected := []string{"bash", "-c", "pwd; echo ok"}
+	if len(cmd) != len(expected) {
+		t.Fatalf("expected %#v, got %#v", expected, cmd)
+	}
+	for i := range expected {
+		if cmd[i] != expected[i] {
+			t.Fatalf("expected %#v, got %#v", expected, cmd)
+		}
+	}
+}
+
+func TestSplitExecCommandRejectsUnterminatedQuote(t *testing.T) {
+	if _, err := splitExecCommand("bash -c 'pwd"); err == nil {
+		t.Fatal("expected unterminated quote error")
+	}
+}
+
 func TestSessionExecUsesProviderConfig(t *testing.T) {
 	provider := &fakeProvider{execResults: make(chan ExecResult, 1)}
 	channel := newFakeChannel()
@@ -151,8 +174,14 @@ func TestSessionExecUsesProviderConfig(t *testing.T) {
 	call := provider.execCalls[0]
 	provider.mu.Unlock()
 
-	if len(call.Cmd) != 2 || call.Cmd[0] != "echo" || call.Cmd[1] != "hello" {
+	expectedCmd := []string{"sh", "-lc", "echo hello"}
+	if len(call.Cmd) != len(expectedCmd) {
 		t.Fatalf("unexpected exec cmd: %#v", call.Cmd)
+	}
+	for i := range expectedCmd {
+		if call.Cmd[i] != expectedCmd[i] {
+			t.Fatalf("unexpected exec cmd: %#v", call.Cmd)
+		}
 	}
 
 	if !call.Tty {

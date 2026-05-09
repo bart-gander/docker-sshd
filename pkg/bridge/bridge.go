@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
@@ -172,6 +173,73 @@ func (s *session) doResize() error {
 	return nil
 }
 
+func splitExecCommand(cmd string) ([]string, error) {
+	var args []string
+	var current strings.Builder
+	var quote rune
+	var escaped bool
+	var inArg bool
+
+	flush := func() {
+		args = append(args, current.String())
+		current.Reset()
+		inArg = false
+	}
+
+	for _, r := range cmd {
+		if escaped {
+			current.WriteRune(r)
+			inArg = true
+			escaped = false
+			continue
+		}
+
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+				inArg = true
+				continue
+			}
+			if quote == '"' && r == '\\' {
+				escaped = true
+				inArg = true
+				continue
+			}
+			current.WriteRune(r)
+			inArg = true
+			continue
+		}
+
+		switch {
+		case unicode.IsSpace(r):
+			if inArg {
+				flush()
+			}
+		case r == '\\':
+			escaped = true
+			inArg = true
+		case r == '\'' || r == '"':
+			quote = r
+			inArg = true
+		default:
+			current.WriteRune(r)
+			inArg = true
+		}
+	}
+
+	if escaped {
+		current.WriteRune('\\')
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated quoted string in exec command")
+	}
+	if inArg {
+		flush()
+	}
+
+	return args, nil
+}
+
 func (s *session) exec(cmd string) error {
 
 	if s.execCalled {
@@ -185,12 +253,16 @@ func (s *session) exec(cmd string) error {
 
 	log.Debugf("exec [%v] in container", cmd)
 
+	// OpenSSH exec requests are shell commands, not argv arrays.
+	// Run through a shell so variable expansion and quoting semantics match SSH expectations.
+	cmdArgs := []string{"sh", "-lc", cmd}
+
 	r, err := s.bridge.provider.Exec(context.Background(), ExecConfig{
 		Input:  s.channel,
 		Output: s.channel,
 		Env:    s.env,
 		Tty:    s.ptyRequested,
-		Cmd:    strings.Split(cmd, " "),
+		Cmd:    cmdArgs,
 	})
 
 	if err != nil {
@@ -237,6 +309,10 @@ func (s *session) handleExec(payload []byte) error {
 
 	if err := ssh.Unmarshal(payload, &msg); err != nil {
 		return err
+	}
+
+	if req, err := parseSCPCommand(msg.Command); err == nil {
+		return s.handleSCP(req)
 	}
 
 	return s.exec(msg.Command)
