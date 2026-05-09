@@ -179,7 +179,7 @@ func TestSCPUploadSingleFile(t *testing.T) {
 		t.Fatalf("expected one provider exec call, got %d", len(provider.execCalls))
 	}
 	cmd := provider.execCalls[0].Cmd
-	if len(cmd) != 3 || cmd[0] != "/bin/sh" || cmd[1] != "-c" || cmd[2] != "cat > '/tmp/hello.txt'" {
+	if len(cmd) != 6 || cmd[0] != "/bin/sh" || cmd[1] != "-c" || cmd[3] != "scp-upload" || cmd[4] != "/tmp/hello.txt" || cmd[5] != "hello.txt" {
 		t.Fatalf("unexpected upload command: %#v", cmd)
 	}
 }
@@ -201,7 +201,7 @@ func TestSCPDownloadSingleFile(t *testing.T) {
 		t.Fatalf("expected one provider exec call, got %d", len(provider.execCalls))
 	}
 	cmd := provider.execCalls[0].Cmd
-	if len(cmd) != 3 || cmd[0] != "/bin/sh" || cmd[1] != "-c" {
+	if len(cmd) != 5 || cmd[0] != "/bin/sh" || cmd[1] != "-c" || cmd[3] != "scp-download" || cmd[4] != "/tmp/file.txt" {
 		t.Fatalf("unexpected download command: %#v", cmd)
 	}
 }
@@ -249,5 +249,15 @@ func TestSCPUploadProviderExecErrorWritesProtocolError(t *testing.T) {
 	got := ch.output.Bytes()
 	if len(got) < 3 || got[0] != 0 || got[1] != 0 || got[2] != 1 {
 		t.Fatalf("expected initial/header OKs then SCP error, got %#v", got)
+	}
+}
+
+func TestParseSCPCommandAcceptsOptionTerminator(t *testing.T) {
+	req, err := parseSCPCommand("scp -t -- -filename")
+	if err != nil {
+		t.Fatalf("parseSCPCommand returned error: %v", err)
+	}
+	if req.Mode != scpModeUpload || req.Path != "-filename" {
+		t.Fatalf("unexpected request: %#v", req)
 	}
 }

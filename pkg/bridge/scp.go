@@ -2,7 +2,6 @@ package bridge
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -42,7 +41,8 @@ func parseSCPCommand(cmd string) (scpRequest, error) {
 	}
 
 	var req scpRequest
-	for _, arg := range args[1:] {
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
 		if len(arg) == 0 {
 			continue
 		}
@@ -51,6 +51,19 @@ func parseSCPCommand(cmd string) (scpRequest, error) {
 				return scpRequest{}, fmt.Errorf("multiple scp paths are not supported")
 			}
 			req.Path = arg
+			continue
+		}
+
+		if arg == "--" {
+			if i+1 >= len(args) {
+				return scpRequest{}, fmt.Errorf("scp target path is required")
+			}
+			next := args[i+1]
+			if req.Path != "" {
+				return scpRequest{}, fmt.Errorf("multiple scp paths are not supported")
+			}
+			req.Path = next
+			i++
 			continue
 		}
 
@@ -216,16 +229,15 @@ func scpUpload(ch io.ReadWriter, req scpRequest, provider SessionProvider) error
 	}
 
 haveHeader:
-	targetPath := req.Path
-	if strings.HasSuffix(targetPath, "/") {
-		targetPath = filepath.Join(targetPath, header.Name)
-	}
-
 	rc, wc := io.Pipe()
 	resultCh, err := provider.Exec(context.Background(), ExecConfig{
 		Input:  rc,
 		Output: io.Discard,
-		Cmd:    []string{"/bin/sh", "-c", "cat > " + shellQuote(targetPath)},
+		Cmd: []string{
+			"/bin/sh", "-c",
+			`target="$1"; name="$2"; if [ -d "$target" ]; then target="$target/$name"; fi; cat > "$target"`,
+			"scp-upload", req.Path, header.Name,
+		},
 	})
 	if err != nil {
 		_ = rc.Close()
@@ -267,34 +279,44 @@ func scpDownload(ch io.ReadWriter, req scpRequest, provider SessionProvider) err
 		return err
 	}
 
-	var output bytes.Buffer
-	escapedPath := shellQuote(req.Path)
-	cmd := "size=$(wc -c < " + escapedPath + ") && printf '%s\\n' \"$size\" && cat " + escapedPath
+	rc, wc := io.Pipe()
 	resultCh, err := provider.Exec(context.Background(), ExecConfig{
-		Output: &output,
-		Cmd:    []string{"/bin/sh", "-c", cmd},
+		Output: wc,
+		Cmd: []string{
+			"/bin/sh", "-c",
+			`target="$1"; size=$(wc -c < "$target") && printf '%s\n' "$size" && cat "$target"`,
+			"scp-download", req.Path,
+		},
 	})
+	if err != nil {
+		_ = rc.Close()
+		_ = wc.Close()
+		return err
+	}
+
+	execErrCh := make(chan error, 1)
+	go func() {
+		result := <-resultCh
+		_ = wc.Close()
+		if result.ExitCode != 0 {
+			execErrCh <- fmt.Errorf("scp download exec failed with exit code %d", result.ExitCode)
+			return
+		}
+		execErrCh <- nil
+	}()
+
+	execReader := bufio.NewReader(rc)
+	sizeLine, err := execReader.ReadString('\n')
 	if err != nil {
 		return err
 	}
-	result := <-resultCh
-	if result.ExitCode != 0 {
-		return fmt.Errorf("scp download exec failed with exit code %d", result.ExitCode)
-	}
-
-	payload := output.Bytes()
-	nl := bytes.IndexByte(payload, '\n')
-	if nl < 0 {
-		return fmt.Errorf("scp download did not receive size line")
-	}
-	size, err := strconv.ParseInt(strings.TrimSpace(string(payload[:nl])), 10, 64)
+	size, err := strconv.ParseInt(strings.TrimSpace(sizeLine), 10, 64)
 	if err != nil {
 		return fmt.Errorf("invalid scp download size: %w", err)
 	}
-	if size < 0 || int64(len(payload[nl+1:])) < size {
-		return fmt.Errorf("scp download output shorter than reported size")
+	if size < 0 {
+		return fmt.Errorf("invalid negative scp file size: %d", size)
 	}
-	data := payload[nl+1 : nl+1+int(size)]
 
 	filename := filepath.Base(req.Path)
 	if _, err := fmt.Fprintf(ch, "C0644 %d %s\n", size, filename); err != nil {
@@ -303,11 +325,17 @@ func scpDownload(ch io.ReadWriter, req scpRequest, provider SessionProvider) err
 	if err := readSCPOK(reader); err != nil {
 		return err
 	}
-	if _, err := ch.Write(data); err != nil {
+	if _, err := io.CopyN(ch, execReader, size); err != nil {
 		return err
 	}
 	if err := writeSCPOK(ch); err != nil {
 		return err
 	}
-	return readSCPOK(reader)
+	if err := readSCPOK(reader); err != nil {
+		return err
+	}
+	if err := <-execErrCh; err != nil {
+		return err
+	}
+	return nil
 }
